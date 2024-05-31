@@ -21,7 +21,6 @@ channelID = int(config.get('DISCORD', 'CHANNELID'))  # Convert to int because Di
 channelNotifierID = int(config.get('DISCORD', 'CHANNELNOTIFIERID'))  # Convert to int because Discord IDs are integers
 roleNotificationID = int(config.get('DISCORD', 'NOTIFICATIONROLE'))  # Convert to int because Discord IDs are integers
 
-
 # Set base directory (relative path)
 base_directory = 'data'
 
@@ -59,7 +58,7 @@ c.execute('''CREATE TABLE IF NOT EXISTS patch
 print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - Patch downloader started.")
 
 # Configuration variables
-fetch_directly = True  # Set to True for fetching directly from GGG servers, False for fetching from GitHub
+fetch_directly = False  # Set to True for fetching directly from GGG servers, False for fetching from GitHub
 log_only_new_versions = True  # Set to True to log only when a new version is downloaded
 
 def fetch_patch():
@@ -79,11 +78,19 @@ intents = discord.Intents.all()
 class MyBot(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.task = None
 
     async def on_ready(self):
         print(f'{self.user.name} has connected to Discord!')
         # Call the function to start the patch downloader
-        bot.loop.create_task(run_patch_downloader())
+        if self.task is not None and not self.task.done():
+            self.task.cancel()
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                print("Previous task was cancelled")
+
+        self.task = bot.loop.create_task(run_patch_downloader())
 
 bot = MyBot(command_prefix='!', intents=intents)
 
@@ -162,7 +169,6 @@ async def run_patch_downloader():
                         message = f"Update Detected: PathOfExile.exe `{version}`\nExe Hash: `{exe_hash}`"
                         await bot.get_channel(channelID).send(message, file=discord.File(fp, filename=zip_name))
                         await bot.get_channel(channelNotifierID).send(f"<@&{roleNotificationID}> {message}") # Post to game_update_notifier
-
 
             # Clear the download folder
             for file_name in os.listdir(download_path):
