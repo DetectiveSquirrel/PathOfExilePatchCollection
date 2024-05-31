@@ -11,6 +11,7 @@ from discord.ext import commands
 import asyncio
 import configparser
 import hashlib
+import uuid
 
 config = configparser.ConfigParser()
 config.read('config.ini')
@@ -55,6 +56,9 @@ c = conn.cursor()
 c.execute('''CREATE TABLE IF NOT EXISTS patch
              (version text, exe_hash text, date_time text)''')
 
+def generate_task_id():
+    return uuid.uuid4().hex[:6].upper()
+
 def log(message):
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - {message}")
 
@@ -83,6 +87,7 @@ async def monitor_tasks(bot):
     last_task_time = datetime.datetime.now()
 
     while True:
+        #log(f"Checking active tasks: {len(bot.active_tasks)}")
         # If more than one task is running, cancel all tasks
         if len(bot.active_tasks) > 1:
             log(f"More than one task found: {len(bot.active_tasks)}. Cancelling all tasks.")
@@ -91,18 +96,21 @@ async def monitor_tasks(bot):
                 try:
                     await task
                 except asyncio.CancelledError:
-                    log("Cancelled task")
+                    log(f"Cancelled task {task.get_name()}")
             bot.active_tasks = []
 
         # Check if no tasks are running for more than 2 minutes
         if not bot.active_tasks or all(task.done() for task in bot.active_tasks):
             current_time = datetime.datetime.now()
             if (current_time - last_task_time).total_seconds() > last_task_time_threshold:
-                log(f"No active tasks for more than {last_task_time_threshold}s. Starting new task...")
-                new_task = bot.loop.create_task(run_patch_downloader(bot))
+                task_id = generate_task_id()
+                log(f"No active tasks for more than {last_task_time_threshold}s Starting new task #{task_id}...")
+                new_task = bot.loop.create_task(run_patch_downloader(bot, task_id))
                 bot.active_tasks.append(new_task)
                 last_task_time = current_time
-                log(f"New task started due to inactivity. Total active tasks: {len(bot.active_tasks)}")
+                log(f"New task #{task_id} started due to inactivity. Total active tasks: {len(bot.active_tasks)}")
+            else:
+                log(f"No active tasks, but within the {last_task_time_threshold}s threshold.")
         else:
             last_task_time = datetime.datetime.now()
 
@@ -124,17 +132,18 @@ class MyBot(commands.Bot):
 
         # Start a new task if no tasks are running
         if not self.active_tasks or all(task.done() for task in self.active_tasks):
-            log("Starting new task...")
-            new_task = self.loop.create_task(run_patch_downloader(self))
+            task_id = generate_task_id()
+            log(f"Starting new task #{task_id}...")
+            new_task = self.loop.create_task(run_patch_downloader(self, task_id))
             self.active_tasks.append(new_task)
-            log(f"New task started and added to active_tasks. Total active tasks: {len(self.active_tasks)}")
+            log(f"New task #{task_id} started and added to active_tasks. Total active tasks: {len(self.active_tasks)}")
         else:
             log("Task is already running.")
 
-async def run_patch_downloader(bot):
-    log("Patch downloader task started.")
+async def run_patch_downloader(bot, task_id):
+    log(f"Patch downloader task #{task_id} started.")
     while True:
-        #log("Patch downloader task is running.")
+        #log(f"Patch downloader task #{task_id} is running.")
         try:
             # Get latest version number
             if fetch_directly:
@@ -216,13 +225,13 @@ async def run_patch_downloader(bot):
                     os.remove(file_path)
 
         except urllib.error.URLError as e:
-            log("Error: Failed to connect to the URL.")
+            log(f"Error in task #{task_id}: Failed to connect to the URL.")
 
         except requests.exceptions.RequestException as e:
-            log("Error: Failed to download the file.")
+            log(f"Error in task #{task_id}: Failed to download the file.")
 
         except Exception as e:
-            log(f"Error: {str(e)}")
+            log(f"Error in task #{task_id}: {str(e)}")
 
         # Calculate the next scheduled check time
         next_check_time = datetime.datetime.now() + datetime.timedelta(seconds=time_interval)
@@ -232,7 +241,7 @@ async def run_patch_downloader(bot):
             log(f"Next check scheduled at: {next_check_time.strftime('%Y-%m-%d %I:%M:%S %p')}")
 
         # Wait for the specified time interval before the next iteration
-        #log(f"Waiting {time_interval}s.")
+        #log(f"Task #{task_id} waiting {time_interval}s.")
         await asyncio.sleep(time_interval)
 
 async def main():
