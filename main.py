@@ -74,17 +74,6 @@ fetch_directly = False  # Set to True for fetching directly from GGG servers, Fa
 log_only_new_versions = True  # Set to True to log only when a new version is downloaded
 debug_mode = False  # Set to True to enable debug logging
 
-def fetch_patch():
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect(("patch.pathofexile.com", 12995))
-            s.sendall(bytes([1, 6]))
-            data = s.recv(1024)
-            patch = data[35:35 + data[34] * 2].decode('utf-16le').split("/")[-2]
-            return patch
-    except Exception as e:
-        log(f"An error occurred: {e}")
-
 intents = discord.Intents.all()
 
 async def monitor_tasks(bot):
@@ -101,8 +90,9 @@ async def monitor_tasks(bot):
                 try:
                     await task
                 except asyncio.CancelledError:
-                    log(f"Cancelled task {task.get_name()}")
+                    log(f"Cancelled task #{bot.task_ids[task]}")
             bot.active_tasks = []
+            bot.task_ids = {}
 
         # Check if no tasks are running for more than 2 minutes
         if not bot.active_tasks or all(task.done() for task in bot.active_tasks):
@@ -118,11 +108,12 @@ async def monitor_tasks(bot):
         # Wait before the next check
         await asyncio.sleep(10)
 
-def start_new_task(bot, reason=""):
+def start_new_task(bot, reason="None"):
     task_id = generate_task_id()
-    log(f"Starting new task #{task_id} {reason}...")
+    log(f"Starting new task #{task_id} Reason[{reason}]")
     new_task = bot.loop.create_task(run_patch_downloader(bot, task_id))
     bot.active_tasks.append(new_task)
+    bot.task_ids[new_task] = task_id
     log(f"New task #{task_id} started and added to active_tasks. Total active tasks: {len(bot.active_tasks)}")
 
 # Discord bot setup
@@ -130,6 +121,7 @@ class MyBot(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.active_tasks = []
+        self.task_ids = {}
 
     async def setup_hook(self):
         log("Setting up the task monitor.")
