@@ -62,12 +62,17 @@ def generate_task_id():
 def log(message):
     print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - {message}")
 
+def debug_log(message, debug_mode):
+    if debug_mode:
+        log(f"Debug[\"{message}\"]")
+
 # startup message
 log(f"Patch downloader started.")
 
 # Configuration variables
 fetch_directly = False  # Set to True for fetching directly from GGG servers, False for fetching from GitHub
 log_only_new_versions = True  # Set to True to log only when a new version is downloaded
+debug_mode = False  # Set to True to enable debug logging
 
 def fetch_patch():
     try:
@@ -87,7 +92,7 @@ async def monitor_tasks(bot):
     last_task_time = datetime.datetime.now()
 
     while True:
-        #log(f"Checking active tasks: {len(bot.active_tasks)}")
+        debug_log(f"Checking active tasks: {len(bot.active_tasks)}", debug_mode)
         # If more than one task is running, cancel all tasks
         if len(bot.active_tasks) > 1:
             log(f"More than one task found: {len(bot.active_tasks)}. Cancelling all tasks.")
@@ -103,19 +108,22 @@ async def monitor_tasks(bot):
         if not bot.active_tasks or all(task.done() for task in bot.active_tasks):
             current_time = datetime.datetime.now()
             if (current_time - last_task_time).total_seconds() > last_task_time_threshold:
-                task_id = generate_task_id()
-                log(f"No active tasks for more than {last_task_time_threshold}s Starting new task #{task_id}...")
-                new_task = bot.loop.create_task(run_patch_downloader(bot, task_id))
-                bot.active_tasks.append(new_task)
+                start_new_task(bot, "due to inactivity")
                 last_task_time = current_time
-                log(f"New task #{task_id} started due to inactivity. Total active tasks: {len(bot.active_tasks)}")
             else:
-                log(f"No active tasks, but within the {last_task_time_threshold}s threshold.")
+                debug_log(f"No active tasks, but within the {last_task_time_threshold}s threshold.", debug_mode)
         else:
             last_task_time = datetime.datetime.now()
 
         # Wait before the next check
         await asyncio.sleep(10)
+
+def start_new_task(bot, reason=""):
+    task_id = generate_task_id()
+    log(f"Starting new task #{task_id} {reason}...")
+    new_task = bot.loop.create_task(run_patch_downloader(bot, task_id))
+    bot.active_tasks.append(new_task)
+    log(f"New task #{task_id} started and added to active_tasks. Total active tasks: {len(bot.active_tasks)}")
 
 # Discord bot setup
 class MyBot(commands.Bot):
@@ -129,21 +137,12 @@ class MyBot(commands.Bot):
 
     async def on_ready(self):
         log(f'{self.user.name} has connected to Discord!')
-
-        # Start a new task if no tasks are running
-        if not self.active_tasks or all(task.done() for task in self.active_tasks):
-            task_id = generate_task_id()
-            log(f"Starting new task #{task_id}...")
-            new_task = self.loop.create_task(run_patch_downloader(self, task_id))
-            self.active_tasks.append(new_task)
-            log(f"New task #{task_id} started and added to active_tasks. Total active tasks: {len(self.active_tasks)}")
-        else:
-            log("Task is already running.")
+        start_new_task(self)
 
 async def run_patch_downloader(bot, task_id):
     log(f"Patch downloader task #{task_id} started.")
     while True:
-        #log(f"Patch downloader task #{task_id} is running.")
+        debug_log(f"Patch downloader task #{task_id} is running.", debug_mode)
         try:
             # Get latest version number
             if fetch_directly:
@@ -241,7 +240,7 @@ async def run_patch_downloader(bot, task_id):
             log(f"Next check scheduled at: {next_check_time.strftime('%Y-%m-%d %I:%M:%S %p')}")
 
         # Wait for the specified time interval before the next iteration
-        #log(f"Task #{task_id} waiting {time_interval}s.")
+        debug_log(f"Task #{task_id} waiting {time_interval}s.", debug_mode)
         await asyncio.sleep(time_interval)
 
 async def main():
