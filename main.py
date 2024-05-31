@@ -26,6 +26,7 @@ base_directory = 'data'
 
 # Specify the time interval (in seconds) for running the code
 time_interval = 60  # Change this value as needed
+last_task_time_threshold = 120  # time where no tasks are running before starting a new one
 
 # Get the absolute path of the current working directory
 cwd = os.getcwd()
@@ -54,8 +55,11 @@ c = conn.cursor()
 c.execute('''CREATE TABLE IF NOT EXISTS patch
              (version text, exe_hash text, date_time text)''')
 
-# Print startup message
-print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - Patch downloader started.")
+def log(message):
+    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - {message}")
+
+# startup message
+log(f"Patch downloader started.")
 
 # Configuration variables
 fetch_directly = False  # Set to True for fetching directly from GGG servers, False for fetching from GitHub
@@ -70,32 +74,67 @@ def fetch_patch():
             patch = data[35:35 + data[34] * 2].decode('utf-16le').split("/")[-2]
             return patch
     except Exception as e:
-        print(f"An error occurred: {e}")
+        log(f"An error occurred: {e}")
 
 intents = discord.Intents.all()
+
+async def monitor_tasks(bot):
+    log("Task monitor started.")
+    last_task_time = datetime.datetime.now()
+
+    while True:
+        # If more than one task is running, cancel all tasks
+        if len(bot.active_tasks) > 1:
+            log(f"More than one task found: {len(bot.active_tasks)}. Cancelling all tasks.")
+            for task in bot.active_tasks:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    log("Cancelled task")
+            bot.active_tasks = []
+
+        # Check if no tasks are running for more than 2 minutes
+        if not bot.active_tasks or all(task.done() for task in bot.active_tasks):
+            current_time = datetime.datetime.now()
+            if (current_time - last_task_time).total_seconds() > last_task_time_threshold:
+                log("No active tasks for more than 2 minutes. Starting new task...")
+                new_task = bot.loop.create_task(run_patch_downloader(bot))
+                bot.active_tasks.append(new_task)
+                last_task_time = current_time
+                log(f"New task started due to inactivity. Total active tasks: {len(bot.active_tasks)}")
+        else:
+            last_task_time = datetime.datetime.now()
+
+        # Wait before the next check
+        await asyncio.sleep(10)
 
 # Discord bot setup
 class MyBot(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.task = None
+        self.active_tasks = []
+
+    async def setup_hook(self):
+        log("Setting up the task monitor.")
+        self.loop.create_task(monitor_tasks(self))
 
     async def on_ready(self):
-        print(f'{self.user.name} has connected to Discord!')
-        # Call the function to start the patch downloader
-        if self.task is not None and not self.task.done():
-            self.task.cancel()
-            try:
-                await self.task
-            except asyncio.CancelledError:
-                print("Previous task was cancelled")
+        log(f'{self.user.name} has connected to Discord!')
 
-        self.task = bot.loop.create_task(run_patch_downloader())
+        # Start a new task if no tasks are running
+        if not self.active_tasks or all(task.done() for task in self.active_tasks):
+            log("Starting new task...")
+            new_task = self.loop.create_task(run_patch_downloader(self))
+            self.active_tasks.append(new_task)
+            log(f"New task started and added to active_tasks. Total active tasks: {len(self.active_tasks)}")
+        else:
+            log("Task is already running.")
 
-bot = MyBot(command_prefix='!', intents=intents)
-
-async def run_patch_downloader():
+async def run_patch_downloader(bot):
+    log("Patch downloader task started.")
     while True:
+        #log("Patch downloader task is running.")
         try:
             # Get latest version number
             if fetch_directly:
@@ -110,10 +149,10 @@ async def run_patch_downloader():
 
             if result:
                 if not log_only_new_versions:
-                    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - Version {version} already exists in the database.")
+                    log(f"Version {version} already exists in the database.")
             else:
                 if version.lower() == "none":
-                    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - Invalid version: {version}. Skipping download.")
+                    log(f"Invalid version: {version}. Skipping download.")
                     continue  # Skip the download process
 
                 # Construct the exe URL using the version
@@ -122,7 +161,7 @@ async def run_patch_downloader():
 
                 # Check if ZIP file already exists
                 if os.path.exists(os.path.join(download_path, zip_name)):
-                    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - ZIP file already exists.")
+                    log(f"ZIP file already exists.")
                 else:
                     # Download the exe
                     response = requests.get(exe_url)
@@ -132,7 +171,7 @@ async def run_patch_downloader():
 
                     # Check the downloaded file size, skip if less than 3MB as it shouldnt ever be that small
                     if os.path.getsize(exe_path) < 3 * 1024 * 1024:  # 3 MB
-                        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - Raw file `{exe_path}` is smaller than 3MB.")
+                        log(f"Raw file `{exe_path}` is smaller than 3MB.")
                         os.remove(exe_path)
                         continue  # Skip the rest due to invalid file.
 
@@ -149,7 +188,7 @@ async def run_patch_downloader():
 
                     # Check the file size
                     if os.path.getsize(zip_path) > 50 * 1024 * 1024:  # 50 MB
-                        print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - Compressed file {zip_name} is larger than 50MB.")
+                        log(f"Compressed file {zip_name} is larger than 50MB.")
 
                     # Insert data into SQLite
                     c.execute("INSERT INTO patch VALUES (?, ?, ?)",
@@ -162,7 +201,7 @@ async def run_patch_downloader():
                     storage_zip_path = os.path.join(storage_path, zip_name)
                     os.replace(zip_path, storage_zip_path)
 
-                    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - New version {version} downloaded and stored.")
+                    log(f"New version {version} downloaded and stored.")
 
                     # Upload the ZIP file
                     with open(storage_zip_path, 'rb') as fp:
@@ -177,23 +216,27 @@ async def run_patch_downloader():
                     os.remove(file_path)
 
         except urllib.error.URLError as e:
-            print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - Error: Failed to connect to the URL.")
+            log("Error: Failed to connect to the URL.")
 
         except requests.exceptions.RequestException as e:
-            print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - Error: Failed to download the file.")
+            log("Error: Failed to download the file.")
 
         except Exception as e:
-            print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - Error: {str(e)}")
+            log(f"Error: {str(e)}")
 
         # Calculate the next scheduled check time
         next_check_time = datetime.datetime.now() + datetime.timedelta(seconds=time_interval)
 
         # Print the next scheduled check time
         if not log_only_new_versions:
-            print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - Next check scheduled at: {next_check_time.strftime('%Y-%m-%d %I:%M:%S %p')}")
+            log(f"Next check scheduled at: {next_check_time.strftime('%Y-%m-%d %I:%M:%S %p')}")
 
         # Wait for the specified time interval before the next iteration
+        #log(f"Waiting {time_interval}s.")
         await asyncio.sleep(time_interval)
 
-# Start the bot
-bot.run(token, reconnect=True)
+async def main():
+    async with MyBot(command_prefix='!', intents=intents) as bot:
+        await bot.start(token)
+
+asyncio.run(main())
