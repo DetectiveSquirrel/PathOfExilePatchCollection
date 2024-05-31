@@ -98,7 +98,7 @@ async def monitor_tasks(bot):
         if not bot.active_tasks or all(task.done() for task in bot.active_tasks):
             current_time = datetime.datetime.now()
             if (current_time - last_task_time).total_seconds() > last_task_time_threshold:
-                log("No active tasks for more than 2 minutes. Starting new task...")
+                log(f"No active tasks for more than {last_task_time_threshold}s. Starting new task...")
                 new_task = bot.loop.create_task(run_patch_downloader(bot))
                 bot.active_tasks.append(new_task)
                 last_task_time = current_time
