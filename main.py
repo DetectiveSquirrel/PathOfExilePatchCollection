@@ -212,14 +212,15 @@ async def run_patch_downloader(bot, task_id):
 
                         # Prepare the Discord embed message
                         embed = discord.Embed(
-                            color=discord.Color(0x8a2be2),
+                            color=discord.Color(0x4deff2),
                             title="PathOfExile.exe Version Change Detected",
                             url="https://www.pathofexile.com/forum/view-forum/patch-notes",
                         )
                         embed.add_field(name="Version:", value=f"`{version}`", inline=True)
                         embed.add_field(name="Zip:", value=f"[PathOfExile.exe]({attachment_url})", inline=True)
-                        embed.add_field(name="Time Ago:", value=f"<t:{int(datetime.datetime.now().timestamp())}:R>", inline=True)
+                        embed.add_field(name="When:", value=f"<t:{int(datetime.datetime.now().timestamp())}:R>", inline=True)
                         embed.add_field(name="Exe Hash:", value=f"`{exe_hash}`", inline=False)
+                        embed.add_field(name="*Source:*", value="`*[PR's for this project can be done so here, I'm not watching them.](https://github.com/DetectiveSquirrel/PathOfExilePatchCollection)*`", inline=False)
 
                         # Now we Notify
                         message = f"<@&{roleNotificationID}> PathOfExile.exe {version}"
