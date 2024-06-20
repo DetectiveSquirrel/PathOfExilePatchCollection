@@ -205,9 +205,25 @@ async def run_patch_downloader(bot, task_id):
 
                     # Upload the ZIP file
                     with open(storage_zip_path, 'rb') as fp:
-                        message = f"Update Detected: PathOfExile.exe `{version}`\nExe Hash: `{exe_hash}`"
-                        await bot.get_channel(channelID).send(message, file=discord.File(fp, filename=zip_name))
-                        await bot.get_channel(channelNotifierID).send(f"<@&{roleNotificationID}> {message}") # Post to game_update_notifier
+
+                        # Upload the file to a dump channel and copy its url
+                        file_upload = await bot.get_channel(channelID).send(file=discord.File(fp, filename=zip_name))
+                        attachment_url = file_upload.attachments[0].url
+
+                        # Prepare the Discord embed message
+                        embed = discord.Embed(
+                            color=discord.Color(0x8a2be2),
+                            title="PathOfExile.exe Version Change Detected",
+                            url="https://www.pathofexile.com/forum/view-forum/patch-notes",
+                        )
+                        embed.add_field(name="Version:", value=f"`{version}`", inline=True)
+                        embed.add_field(name="Zip:", value=f"[PathOfExile.exe]({attachment_url})", inline=True)
+                        embed.add_field(name="Time Ago:", value=f"<t:{int(datetime.datetime.now().timestamp())}:R>", inline=True)
+                        embed.add_field(name="Exe Hash:", value=f"`{exe_hash}`", inline=False)
+                        embed.add_field(name="Mentions:", value=f"<@&{roleNotificationID}>", inline=False)
+
+                        # Now we Notify
+                        await bot.get_channel(channelNotifierID).send(embed=embed)
 
             # Clear the download folder
             for file_name in os.listdir(download_path):
