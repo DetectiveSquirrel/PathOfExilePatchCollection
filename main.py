@@ -220,9 +220,9 @@ async def run_patch_downloader(bot, task_id):
                         embed.add_field(name="Zip:", value=f"[PathOfExile.exe]({attachment_url})", inline=True)
                         embed.add_field(name="Time Ago:", value=f"<t:{int(datetime.datetime.now().timestamp())}:R>", inline=True)
                         embed.add_field(name="Exe Hash:", value=f"`{exe_hash}`", inline=False)
-                        embed.add_field(name="Mentions:", value=f"<@&{roleNotificationID}>", inline=False)
 
                         # Now we Notify
+                        await bot.get_channel(channelNotifierID).send(f"<@&{roleNotificationID}>")
                         await bot.get_channel(channelNotifierID).send(embed=embed)
 
             # Clear the download folder
