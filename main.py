@@ -222,8 +222,7 @@ async def run_patch_downloader(bot, task_id):
                         embed.add_field(name="Exe Hash:", value=f"`{exe_hash}`", inline=False)
 
                         # Now we Notify
-                        await bot.get_channel(channelNotifierID).send(f"<@&{roleNotificationID}>")
-                        await bot.get_channel(channelNotifierID).send(embed=embed)
+                        await bot.get_channel(channelNotifierID).send(f"<@&{roleNotificationID}>", embed=embed)
 
             # Clear the download folder
             for file_name in os.listdir(download_path):
