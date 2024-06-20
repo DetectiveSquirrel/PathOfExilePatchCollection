@@ -220,7 +220,7 @@ async def run_patch_downloader(bot, task_id):
                         embed.add_field(name="Zip:", value=f"[PathOfExile.exe]({attachment_url})", inline=True)
                         embed.add_field(name="When:", value=f"<t:{int(datetime.datetime.now().timestamp())}:R>", inline=True)
                         embed.add_field(name="Exe Hash:", value=f"`{exe_hash}`", inline=False)
-                        embed.add_field(name="*Source:*", value="`*[PR's for this project can be done so here, I'm not watching them.](https://github.com/DetectiveSquirrel/PathOfExilePatchCollection)*`", inline=False)
+                        embed.add_field(name="*Source:*", value="*[PR's for this project can be done so here, I'm not watching them.](https://github.com/DetectiveSquirrel/PathOfExilePatchCollection)*", inline=False)
 
                         # Now we Notify
                         message = f"<@&{roleNotificationID}> PathOfExile.exe {version}"
