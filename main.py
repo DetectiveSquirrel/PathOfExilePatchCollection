@@ -96,7 +96,7 @@ def fetch_patch():
             s.connect(("patch.pathofexile.com", 12995))
             s.sendall(bytes([1, 6]))
             data = s.recv(1024)
-            patch = data[35:35 + data[34] * 2].decode('utf-16le').split("/")[-2]
+            patch = data.decode('utf-8').split("/")[-2]
             return patch
     except Exception as e:
         print(f"An error occurred: {e}")
