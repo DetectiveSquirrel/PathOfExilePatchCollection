@@ -1,3 +1,4 @@
+import logging
 import os
 import sqlite3
 import urllib.request
@@ -13,17 +14,32 @@ import configparser
 import hashlib
 import uuid
 
+# Set up logging to flush immediately
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', handlers=[logging.StreamHandler()])
+
+# Adapter function
+def adapt_datetime(dt):
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+# Converter function
+def convert_datetime(s):
+    return datetime.datetime.strptime(s.decode(), "%Y-%m-%d %H:%M:%S")
+
+# Register the adapter and converter
+sqlite3.register_adapter(datetime.datetime, adapt_datetime)
+sqlite3.register_converter("timestamp", convert_datetime)
+
 config = configparser.ConfigParser()
 config.read('config.ini')
+
+# Set base directory (relative path)
+base_directory = 'data'
 
 # bot token and channel ID
 token = config.get('DISCORD', 'TOKEN')
 channelID = int(config.get('DISCORD', 'CHANNELID'))  # Convert to int because Discord IDs are integers
 channelNotifierID = int(config.get('DISCORD', 'CHANNELNOTIFIERID'))  # Convert to int because Discord IDs are integers
 roleNotificationID = int(config.get('DISCORD', 'NOTIFICATIONROLE'))  # Convert to int because Discord IDs are integers
-
-# Set base directory (relative path)
-base_directory = 'data'
 
 # Specify the time interval (in seconds) for running the code
 time_interval = 60  # Change this value as needed
@@ -49,18 +65,18 @@ os.makedirs(storage_path, exist_ok=True)
 os.makedirs(download_path, exist_ok=True)
 
 # Create connection and cursor to SQLite database
-conn = sqlite3.connect(os.path.join(base_path, 'patchdatabase.db'))
+conn = sqlite3.connect(os.path.join(base_path, 'patchdatabase.db'), detect_types=sqlite3.PARSE_DECLTYPES)
 c = conn.cursor()
 
 # Create table if not exists
 c.execute('''CREATE TABLE IF NOT EXISTS patch
-             (version text, exe_hash text, date_time text)''')
+             (version text, exe_hash text, date_time timestamp)''')
 
 def generate_task_id():
     return uuid.uuid4().hex[:6].upper()
 
 def log(message):
-    print(f"{datetime.datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')} - {message}")
+    logging.info(message)
 
 def debug_log(message, debug_mode):
     if debug_mode:
@@ -186,13 +202,9 @@ async def run_patch_downloader(bot, task_id):
                     with ZipFile(zip_path, 'w', ZIP_DEFLATED, compresslevel=9) as zipf:
                         zipf.write(exe_path, arcname="PathOfExile.exe")
 
-                    # Check the file size
-                    if os.path.getsize(zip_path) > 50 * 1024 * 1024:  # 50 MB
-                        log(f"Compressed file {zip_name} is larger than 50MB.")
-
                     # Insert data into SQLite
                     c.execute("INSERT INTO patch VALUES (?, ?, ?)",
-                                (version, exe_hash, datetime.datetime.now()))
+                              (version, exe_hash, datetime.datetime.now()))
 
                     # Save (commit) the changes
                     conn.commit()
