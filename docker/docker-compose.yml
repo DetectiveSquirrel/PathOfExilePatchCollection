@@ -1,0 +1,9 @@
+services:
+  container_name: PathOfExilePatchCollection
+  image: sithy/python-runner:1.0
+  restart: unless-stopped
+  environment:
+    - DEBUG=false
+  volumes:
+    - /dir/to/script/folder:/usr/src/app/script
+    - /dir/to/data/folder:/usr/src/app/script/data
