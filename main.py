@@ -90,6 +90,17 @@ fetch_directly = False  # Set to True for fetching directly from GGG servers, Fa
 log_only_new_versions = True  # Set to True to log only when a new version is downloaded
 debug_mode = False  # Set to True to enable debug logging
 
+def fetch_patch():
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect(("patch.pathofexile.com", 12995))
+            s.sendall(bytes([1, 6]))
+            data = s.recv(1024)
+            patch = data[35:35 + data[34] * 2].decode('utf-16le').split("/")[-2]
+            return patch
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
 intents = discord.Intents.all()
 
 async def monitor_tasks(bot):
