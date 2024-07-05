@@ -1,282 +1,254 @@
 import logging
-import os
-import sqlite3
-import urllib.request
+import aiohttp
+import asyncio
 import datetime
-import requests
 from zipfile import ZipFile, ZIP_DEFLATED
-import time
-import socket
 import discord
 from discord.ext import commands
-import asyncio
-import configparser
 import hashlib
-import uuid
+import settings
 
-# Set up logging to flush immediately
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', handlers=[logging.StreamHandler()])
+# Initialize the logger
+logger = logging.getLogger(__name__)
 
-# Adapter function
-def adapt_datetime(dt):
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+name = "Path of Exile Patch Downloader"
+version = "1.0"
 
-# Converter function
-def convert_datetime(s):
-    return datetime.datetime.strptime(s.decode(), "%Y-%m-%d %H:%M:%S")
 
-# Register the adapter and converter
-sqlite3.register_adapter(datetime.datetime, adapt_datetime)
-sqlite3.register_converter("timestamp", convert_datetime)
-
-config = configparser.ConfigParser()
-config.read('config.ini')
-
-# Set base directory (relative path)
-base_directory = 'data'
-
-# bot token and channel ID
-token = config.get('DISCORD', 'TOKEN')
-channelID = int(config.get('DISCORD', 'CHANNELID'))  # Convert to int because Discord IDs are integers
-channelNotifierID = int(config.get('DISCORD', 'CHANNELNOTIFIERID'))  # Convert to int because Discord IDs are integers
-roleNotificationID = int(config.get('DISCORD', 'NOTIFICATIONROLE'))  # Convert to int because Discord IDs are integers
-
-# Specify the time interval (in seconds) for running the code
-time_interval = 60  # Change this value as needed
-last_task_time_threshold = 120  # time where no tasks are running before starting a new one
-
-# Get the absolute path of the current working directory
-cwd = os.getcwd()
-base_path = os.path.join(cwd, base_directory)
-
-# Create base directory if it doesn't exist
-os.makedirs(base_path, exist_ok=True)
-
-# Set storage and download directories (relative paths)
-storage_directory = os.path.join(base_directory, 'stored')
-download_directory = os.path.join(base_directory, 'download')
-
-# Get the absolute paths of storage and download directories
-storage_path = os.path.join(cwd, storage_directory)
-download_path = os.path.join(cwd, download_directory)
-
-# Create storage and download directories if they don't exist
-os.makedirs(storage_path, exist_ok=True)
-os.makedirs(download_path, exist_ok=True)
-
-# Create connection and cursor to SQLite database
-conn = sqlite3.connect(os.path.join(base_path, 'patchdatabase.db'), detect_types=sqlite3.PARSE_DECLTYPES)
-c = conn.cursor()
-
-# Create table if not exists
-c.execute('''CREATE TABLE IF NOT EXISTS patch
-             (version text, exe_hash text, date_time timestamp)''')
-
-def generate_task_id():
-    return uuid.uuid4().hex[:6].upper()
-
-def log(message):
-    logging.info(message)
-
-def debug_log(message, debug_mode):
-    if debug_mode:
-        log(f"Debug[\"{message}\"]")
-
-# startup message
-log(f"Patch downloader started.")
-
-# Configuration variables
-fetch_directly = False  # Set to True for fetching directly from GGG servers, False for fetching from GitHub
-log_only_new_versions = True  # Set to True to log only when a new version is downloaded
-debug_mode = False  # Set to True to enable debug logging
-
-def fetch_patch():
+async def fetch_patch():
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect(("patch.pathofexile.com", 12995))
-            s.sendall(bytes([1, 6]))
-            data = s.recv(1024)
-            patch = data.decode('utf-8').split("/")[-2]
-            return patch
+        reader, writer = await asyncio.open_connection("patch.pathofexile.com", 12995)
+        writer.write(bytes([1, 6]))
+        await writer.drain()
+        data = await reader.read(1024)
+        writer.close()
+        await writer.wait_closed()
+        patch = data[35 : 35 + data[34] * 2].decode("utf-16le").split("/")[-2]
+        logger.debug(f"Fetched patch version directly: {patch}")
+        return patch
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logger.error(f"An error occurred while fetching patch: {e}")
+        return None
+
+
+async def fetch_patch_from_github():
+    url = "https://raw.githubusercontent.com/poe-tool-dev/latest-patch-version/main/latest.txt"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                version = await response.text()
+                version = version.strip()
+                logger.debug(f"Fetched patch version from GitHub: {version}")
+                return version
+    except Exception as e:
+        logger.error(f"An error occurred while fetching patch from GitHub: {e}")
+        return None
+
 
 intents = discord.Intents.all()
 
-async def monitor_tasks(bot):
-    log("Task monitor started.")
-    last_task_time = datetime.datetime.now()
 
+async def patch_downloader():
+    logger.info("Started Patch Downloader Task.")
     while True:
-        debug_log(f"Checking active tasks: {len(bot.active_tasks)}", debug_mode)
-        # If more than one task is running, cancel all tasks
-        if len(bot.active_tasks) > 1:
-            log(f"More than one task found: {len(bot.active_tasks)}. Cancelling all tasks.")
-            for task in bot.active_tasks:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    log(f"Cancelled task #{bot.task_ids[task]}")
-            bot.active_tasks = []
-            bot.task_ids = {}
-
-        # Check if no tasks are running for more than 2 minutes
-        if not bot.active_tasks or all(task.done() for task in bot.active_tasks):
-            current_time = datetime.datetime.now()
-            if (current_time - last_task_time).total_seconds() > last_task_time_threshold:
-                start_new_task(bot, "due to inactivity")
-                last_task_time = current_time
-            else:
-                debug_log(f"No active tasks, but within the {last_task_time_threshold}s threshold.", debug_mode)
-        else:
-            last_task_time = datetime.datetime.now()
-
-        # Wait before the next check
-        await asyncio.sleep(10)
-
-def start_new_task(bot, reason="None"):
-    task_id = generate_task_id()
-    log(f"Starting new task #{task_id} Reason[{reason}]")
-    new_task = bot.loop.create_task(run_patch_downloader(bot, task_id))
-    bot.active_tasks.append(new_task)
-    bot.task_ids[new_task] = task_id
-    log(f"New task #{task_id} started and added to active_tasks. Total active tasks: {len(bot.active_tasks)}")
-
-# Discord bot setup
-class MyBot(commands.Bot):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.active_tasks = []
-        self.task_ids = {}
-
-    async def setup_hook(self):
-        log("Setting up the task monitor.")
-        self.loop.create_task(monitor_tasks(self))
-
-    async def on_ready(self):
-        log(f'{self.user.name} has connected to Discord!')
-        start_new_task(self)
-
-async def run_patch_downloader(bot, task_id):
-    log(f"Patch downloader task #{task_id} started.")
-    while True:
-        debug_log(f"Patch downloader task #{task_id} is running.", debug_mode)
         try:
-            # Get latest version number
-            if fetch_directly:
-                version = fetch_patch()
+            version = (
+                await fetch_patch()
+                if settings.FETCH_DIRECTLY
+                else await fetch_patch_from_github()
+            )
+            if version and version.lower() != "none":
+                settings.CURSOR.execute(
+                    "SELECT * FROM patch WHERE version=?", (version,)
+                )
+                result = settings.CURSOR.fetchone()
+
+                if not result:
+                    exe_url = f"https://patch.poecdn.com/{version}/PathOfExile.exe"
+                    zip_name = f"{version}.zip"
+                    logger.debug(f"Exe URL: {exe_url}")
+                    logger.debug(f"Zip Name: {zip_name}")
+
+                    if not (settings.DOWNLOAD_DIRECTORY / zip_name).exists():
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(exe_url) as response:
+                                if response.status != 200:
+                                    logger.error(
+                                        f"Failed to download executable. Status code: {response.status}"
+                                    )
+                                    continue
+                                exe_path = (
+                                    settings.DOWNLOAD_DIRECTORY / "PathOfExile.exe"
+                                )
+                                with exe_path.open("wb") as f:
+                                    f.write(await response.read())
+
+                        if exe_path.stat().st_size < 3 * 1024 * 1024:
+                            logger.info(
+                                f"Raw file `{exe_path}` is smaller than 3MB. Skipping download."
+                            )
+                            exe_path.unlink()
+                            continue
+
+                        hash_object = hashlib.sha256()
+                        with exe_path.open("rb") as f:
+                            hash_object.update(f.read())
+                        exe_hash = hash_object.hexdigest()
+                        logger.debug(f"Exe Hash: {exe_hash}")
+
+                        zip_path = settings.DOWNLOAD_DIRECTORY / zip_name
+                        with ZipFile(
+                            zip_path, "w", ZIP_DEFLATED, compresslevel=9
+                        ) as zipf:
+                            zipf.write(exe_path, arcname="PathOfExile.exe")
+
+                        # Insert data into SQLite
+                        settings.CURSOR.execute(
+                            "INSERT INTO patch (version, exe_hash, date_time) VALUES (?, ?, ?)",
+                            (version, exe_hash, datetime.datetime.now()),
+                        )
+                        settings.CURSOR.execute(
+                            "INSERT INTO message_log (version, sent, timestamp_sent, timestamp_logged) VALUES (?, ?, ?, ?)",
+                            (version, False, None, datetime.datetime.now()),
+                        )
+                        settings.CONN.commit()
+
+                        # Move the ZIP file to the storage directory
+                        storage_zip_path = settings.STORAGE_DIRECTORY / zip_name
+                        zip_path.replace(storage_zip_path)
+
+                        # Clean up the leftover .exe file
+                        exe_path.unlink()
+
+                        logger.info(
+                            f"New version {version} downloaded, stored, and cleaned up."
+                        )
+                    else:
+                        logger.info(f"ZIP file for version {version} already exists.")
             else:
-                response = urllib.request.urlopen('https://raw.githubusercontent.com/poe-tool-dev/latest-patch-version/main/latest.txt')
-                version = response.read().decode()
+                logger.error(f"Invalid or no version found: {version}")
+        except Exception as e:
+            logger.error(f"Error in patch downloader: {e}")
 
-            # Check if version already exists in the database
-            c.execute("SELECT * FROM patch WHERE version=?", (version,))
-            result = c.fetchone()
+        logger.debug(f"Patch Downloader waiting {settings.TIME_INTERVAL_TO_DOWNLOAD}s.")
+        await asyncio.sleep(settings.TIME_INTERVAL_TO_DOWNLOAD)
 
-            if result:
-                if not log_only_new_versions:
-                    log(f"Version {version} already exists in the database.")
-            else:
-                if version.lower() == "none":
-                    log(f"Invalid version: {version}. Skipping download.")
-                    continue  # Skip the download process
 
-                # Construct the exe URL using the version
-                exe_url = f"https://patch.poecdn.com/{version}/PathOfExile.exe"
-                zip_name = f"{version}.zip"
+async def send_pending_messages(bot):
+    logger.info("Started Pending Message Task.")
+    while True:
+        if bot.is_ready():
+            logger.debug("Bot is ready. Checking for pending messages...")
 
-                # Check if ZIP file already exists
-                if os.path.exists(os.path.join(download_path, zip_name)):
-                    log(f"ZIP file already exists.")
-                else:
-                    # Download the exe
-                    response = requests.get(exe_url)
-                    exe_path = os.path.join(download_path, "PathOfExile.exe")
-                    with open(exe_path, 'wb') as f:
-                        f.write(response.content)
+            # Fetch pending messages
+            settings.CURSOR.execute("SELECT * FROM message_log WHERE sent=0")
+            pending_messages = settings.CURSOR.fetchall()
+            logger.debug(f"Found {len(pending_messages)} pending messages.")
 
-                    # Check the downloaded file size, skip if less than 3MB as it shouldnt ever be that small
-                    if os.path.getsize(exe_path) < 3 * 1024 * 1024:  # 3 MB
-                        log(f"Raw file `{exe_path}` is smaller than 3MB.")
-                        os.remove(exe_path)
-                        continue  # Skip the rest due to invalid file.
+            for message in pending_messages:
+                version = message[1]
+                storage_zip_path = settings.STORAGE_DIRECTORY / f"{version}.zip"
+                logger.debug(
+                    f"Processing message for version {version} with id {message[0]}."
+                )
 
-                    # Calculate the hash of the downloaded exe
-                    hash_object = hashlib.sha256()
-                    with open(exe_path, 'rb') as f:
-                        hash_object.update(f.read())
-                    exe_hash = hash_object.hexdigest()
-
-                    # Compress the downloaded exe into a ZIP file
-                    zip_path = os.path.join(download_path, zip_name)
-                    with ZipFile(zip_path, 'w', ZIP_DEFLATED, compresslevel=9) as zipf:
-                        zipf.write(exe_path, arcname="PathOfExile.exe")
-
-                    # Insert data into SQLite
-                    c.execute("INSERT INTO patch VALUES (?, ?, ?)",
-                              (version, exe_hash, datetime.datetime.now()))
-
-                    # Save (commit) the changes
-                    conn.commit()
-
-                    # Move the ZIP file to the storage directory
-                    storage_zip_path = os.path.join(storage_path, zip_name)
-                    os.replace(zip_path, storage_zip_path)
-
-                    log(f"New version {version} downloaded and stored.")
-
-                    # Upload the ZIP file
-                    with open(storage_zip_path, 'rb') as fp:
-
-                        # Upload the file to a dump channel and copy its url
-                        file_upload = await bot.get_channel(channelID).send(file=discord.File(fp, filename=zip_name))
+                try:
+                    with storage_zip_path.open("rb") as fp:
+                        logger.debug(f"Uploading file for version {version}...")
+                        file_upload = await bot.get_channel(settings.CHANNEL_ID).send(
+                            file=discord.File(fp, filename=f"{version}.zip")
+                        )
                         attachment_url = file_upload.attachments[0].url
+                        logger.debug(
+                            f"File uploaded for version {version}. Attachment URL: {attachment_url}"
+                        )
 
-                        # Prepare the Discord embed message
+                        # Fetch exe_hash from the database
+                        settings.CURSOR.execute(
+                            "SELECT exe_hash FROM patch WHERE version=?", (version,)
+                        )
+                        exe_hash = settings.CURSOR.fetchone()
+                        exe_hash = exe_hash[0] if exe_hash else "N/A(uh oh)"
+
                         embed = discord.Embed(
-                            color=discord.Color(0x4deff2),
+                            color=discord.Color(0x4DEFF2),
                             title="PathOfExile.exe Version Change Detected",
                             url="https://www.pathofexile.com/forum/view-forum/patch-notes",
                         )
-                        embed.add_field(name="Version:", value=f"`{version}`", inline=True)
-                        embed.add_field(name="Zip:", value=f"[PathOfExile.exe]({attachment_url})", inline=True)
-                        embed.add_field(name="When:", value=f"<t:{int(datetime.datetime.now().timestamp())}:R>", inline=True)
-                        embed.add_field(name="Exe Hash:", value=f"`{exe_hash}`", inline=False)
-                        embed.add_field(name="*Source:*", value="*[PR's for this project can be done so here, I'm not watching them.](https://github.com/DetectiveSquirrel/PathOfExilePatchCollection)*", inline=False)
+                        embed.add_field(
+                            name="Version:", value=f"`{version}`", inline=True
+                        )
+                        embed.add_field(
+                            name="Zip:",
+                            value=f"[PathOfExile.exe]({attachment_url})",
+                            inline=True,
+                        )
+                        embed.add_field(
+                            name="When:",
+                            value=f"<t:{int(datetime.datetime.now().timestamp())}:R>",
+                            inline=True,
+                        )
+                        embed.add_field(
+                            name="Exe Hash:", value=f"`{exe_hash}`", inline=False
+                        )
+                        embed.add_field(
+                            name="*Source:*",
+                            value="*[PR's for this project can be done so here, I'm not watching them.](https://github.com/DetectiveSquirrel/PathOfExilePatchCollection)*",
+                            inline=False,
+                        )
 
-                        # Now we Notify
-                        message = f"<@&{roleNotificationID}> PathOfExile.exe {version}"
-                        await bot.get_channel(channelNotifierID).send(message, embed=embed)
+                        message_content = f"<@&{settings.NOTIFICATION_ROLE}> PathOfExile.exe {version}"
+                        logger.debug(
+                            f"Sending message to notifier channel for version {version}..."
+                        )
+                        await bot.get_channel(settings.CHANNEL_NOTIFIER_ID).send(
+                            message_content, embed=embed
+                        )
+                        logger.info(
+                            f"Message sent to notifier channel for version {version}."
+                        )
 
-            # Clear the download folder
-            for file_name in os.listdir(download_path):
-                file_path = os.path.join(download_path, file_name)
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
+                        # Update the message log entry to mark it as sent
+                        logger.debug(
+                            f"Updating database for message id {message[0]}..."
+                        )
+                        settings.CURSOR.execute(
+                            "UPDATE message_log SET sent = ?, timestamp_sent = ? WHERE id = ?",
+                            (True, datetime.datetime.now(), message[0]),
+                        )
+                        settings.CONN.commit()
+                        logger.debug(
+                            f"Database updated for message id {message[0]}: marked as sent."
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to send message for version {version}: {e}. Continuing to the next message..."
+                    )
+        else:
+            logger.debug("Bot is not ready.")
 
-        except urllib.error.URLError as e:
-            log(f"Error in task #{task_id}: Failed to connect to the URL.")
+        logger.debug(f"Pending Message waiting {settings.TIME_INTERVAL_TO_MESSAGE}s.")
+        await asyncio.sleep(settings.TIME_INTERVAL_TO_MESSAGE)
 
-        except requests.exceptions.RequestException as e:
-            log(f"Error in task #{task_id}: Failed to download the file.")
 
-        except Exception as e:
-            log(f"Error in task #{task_id}: {str(e)}")
+class MyBot(commands.Bot):
+    def __init__(self, *args, **kwargs):
+        # Startup message
+        logger.info(f"Starting up bot '{name} v{version}'")
+        super().__init__(*args, **kwargs)
 
-        # Calculate the next scheduled check time
-        next_check_time = datetime.datetime.now() + datetime.timedelta(seconds=time_interval)
+    async def setup_hook(self):
+        self.loop.create_task(patch_downloader())
+        self.loop.create_task(send_pending_messages(self))
 
-        # Print the next scheduled check time
-        if not log_only_new_versions:
-            log(f"Next check scheduled at: {next_check_time.strftime('%Y-%m-%d %I:%M:%S %p')}")
+    async def on_ready(self):
+        logger.info(f"{self.user.name} has connected to Discord!")
 
-        # Wait for the specified time interval before the next iteration
-        debug_log(f"Task #{task_id} waiting {time_interval}s.", debug_mode)
-        await asyncio.sleep(time_interval)
 
 async def main():
-    async with MyBot(command_prefix='!', intents=intents) as bot:
-        await bot.start(token)
+    async with MyBot(command_prefix="!", intents=intents) as bot:
+        await bot.start(settings.DISCORD_API_SECRET, reconnect=True)
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())
