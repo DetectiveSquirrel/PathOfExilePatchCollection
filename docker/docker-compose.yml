@@ -1,6 +1,6 @@
 services:
   container_name: PathOfExilePatchCollection
-  image: sithy/python-runner:1.0
+  image: sithy/python-runner:1.1
   restart: unless-stopped
   environment:
     - DEBUG=false
