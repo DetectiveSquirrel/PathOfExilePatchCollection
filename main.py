@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 name = "Path of Exile Patch Downloader"
 version = "1.0"
 
+extensions = ["cogs.admincommands", "cogs.membercommands"]
+
 
 async def fetch_patch():
     try:
@@ -102,14 +104,15 @@ async def patch_downloader():
                         ) as zipf:
                             zipf.write(exe_path, arcname="PathOfExile.exe")
 
-                        # Insert data into SQLite
+                        # Insert data into SQLite with Unix timestamps
+                        current_unix_time = int(datetime.datetime.now().timestamp())
                         settings.CURSOR.execute(
-                            "INSERT INTO patch (version, exe_hash, date_time) VALUES (?, ?, ?)",
-                            (version, exe_hash, datetime.datetime.now()),
+                            "INSERT INTO patch (version, exe_hash, unix_time) VALUES (?, ?, ?)",
+                            (version, exe_hash, current_unix_time),
                         )
                         settings.CURSOR.execute(
-                            "INSERT INTO message_log (version, sent, timestamp_sent, timestamp_logged) VALUES (?, ?, ?, ?)",
-                            (version, False, None, datetime.datetime.now()),
+                            "INSERT INTO message_log (version, sent, unix_time_sent, unix_time_logged) VALUES (?, ?, ?, ?)",
+                            (version, False, None, current_unix_time),
                         )
                         settings.CONN.commit()
 
@@ -213,8 +216,12 @@ async def send_pending_messages(bot):
                             f"Updating database for message id {message[0]}..."
                         )
                         settings.CURSOR.execute(
-                            "UPDATE message_log SET sent = ?, timestamp_sent = ? WHERE id = ?",
-                            (True, datetime.datetime.now(), message[0]),
+                            "UPDATE message_log SET sent = ?, unix_time_sent = ? WHERE id = ?",
+                            (
+                                True,
+                                int(datetime.datetime.now().timestamp()),
+                                message[0],
+                            ),
                         )
                         settings.CONN.commit()
                         logger.debug(
@@ -224,6 +231,7 @@ async def send_pending_messages(bot):
                     logger.error(
                         f"Failed to send message for version {version}: {e}. Continuing to the next message..."
                     )
+
         else:
             logger.debug("Bot is not ready.")
 
@@ -243,6 +251,22 @@ class MyBot(commands.Bot):
 
     async def on_ready(self):
         logger.info(f"{self.user.name} has connected to Discord!")
+
+        for extension in extensions:
+            try:
+                await self.load_extension(extension)
+                logger.info(f"Loaded extension '{extension}'")
+            except commands.ExtensionAlreadyLoaded:
+                logger.warning(f"Extension '{extension}' is already loaded")
+            except commands.ExtensionNotFound:
+                logger.error(f"Extension '{extension}' not found")
+            except commands.NoEntryPointError:
+                logger.error(f"Extension '{extension}' does not have a setup function")
+            except commands.ExtensionFailed as e:
+                logger.error(f"Extension '{extension}' failed to load: {e}")
+
+        self.tree.copy_global_to(guild=settings.BASE_SERVER_ID)
+        await self.tree.sync(guild=settings.BASE_SERVER_ID)
 
 
 async def main():
