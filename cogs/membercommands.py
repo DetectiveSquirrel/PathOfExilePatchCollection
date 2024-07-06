@@ -34,7 +34,7 @@ class MemberCommands(commands.Cog):
         versions = settings.CURSOR.fetchall()
 
         if not versions:
-            await ctx.send("No versions stored.")
+            await ctx.send("No versions stored.", ephemeral=True)
             return
 
         # Reverse the versions list to display from newest to oldest
@@ -53,17 +53,17 @@ class MemberCommands(commands.Cog):
 
             version_list = "\n".join(
                 [
-                    f"**Version:** `{version.ljust(max_version_length)}` | **Stored:** <t:{unix_time}> <t:{unix_time}:R>"
+                    f"**Version:** `{version.ljust(max_version_length)}` | **Stored:** <t:{unix_time}:R> <t:{unix_time}>"
                     for version, unix_time in page_versions
                 ]
             )
 
             embed = discord.Embed(
-                title=f"Stored Versions (Page {page_index}/{total_pages})",
+                title=f"Versions (Page {page_index}/{total_pages})",
                 description=version_list,
                 color=discord.Color.blue(),
             )
-            embed.set_footer(text=f"Total Versions: {len(versions)}")
+            embed.set_footer(text=f"Total Stored: {len(versions)}")
             return embed, total_pages
 
         view = helpers.pagination.Pagination(ctx.interaction, get_page)

@@ -1,6 +1,7 @@
 import discord
 from typing import Callable, Optional
 
+
 class Pagination(discord.ui.View):
     def __init__(self, interaction: discord.Interaction, get_page: Callable):
         super().__init__(timeout=100)
@@ -9,7 +10,7 @@ class Pagination(discord.ui.View):
         self.total_pages: Optional[int] = None
         self.index = 1
 
-    #async def interaction_check(self, interaction: discord.Interaction) -> bool:
+    # async def interaction_check(self, interaction: discord.Interaction) -> bool:
     #    if interaction.user == self.interaction.user:
     #        return True
     #    else:
