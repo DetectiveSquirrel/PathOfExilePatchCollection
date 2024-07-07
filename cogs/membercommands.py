@@ -71,7 +71,6 @@ class MemberCommands(commands.Cog):
                     inline=False,
                 )
 
-            embed.set_footer(text=f"Total Stored: {len(versions)}")
             return embed, total_pages
 
         view = helpers.pagination.Pagination(ctx.interaction, get_page)
