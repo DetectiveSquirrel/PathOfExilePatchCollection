@@ -194,6 +194,14 @@ async def send_pending_messages(bot):
                         embed.add_field(
                             name="Exe Hash:", value=f"`{exe_hash}`", inline=False
                         )
+
+                        if settings.MEGA_LINK_ENABLED:
+                            embed.add_field(
+                                name="Binaries:",
+                                value=f"[*MEGA link to all.*]({settings.MEGA_LINK})",
+                                inline=False,
+                            )
+                            
                         embed.add_field(
                             name="*Source:*",
                             value="*[PR's for this project can be done so here, I'm not watching them.](https://github.com/DetectiveSquirrel/PathOfExilePatchCollection)*",

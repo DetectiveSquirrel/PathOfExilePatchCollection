@@ -63,6 +63,14 @@ class MemberCommands(commands.Cog):
                 description=version_list,
                 color=discord.Color.blue(),
             )
+
+            if settings.MEGA_LINK_ENABLED:
+                embed.add_field(
+                    name="Binaries:",
+                    value=f"[*MEGA link to all.*]({settings.MEGA_LINK})",
+                    inline=False,
+                )
+
             embed.set_footer(text=f"Total Stored: {len(versions)}")
             return embed, total_pages
 

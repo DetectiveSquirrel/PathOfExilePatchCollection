@@ -17,6 +17,10 @@ load_dotenv()
 # Bot Token
 DISCORD_API_SECRET = os.getenv("DISCORD_API_SECRET")
 
+#Mega Config
+MEGA_LINK_ENABLED = os.getenv("MEGA_LINK_ENABLED", "false").lower() == "true"
+MEGA_LINK = os.getenv("MEGA_LINK", "https://google.com")
+
 # Base Config
 BASE_SERVER_ID = discord.Object(id=int(os.getenv("BASE_SERVER_ID", 0)))
 BASE_OWNER_ID = int(os.getenv("BASE_OWNER_ID", 0))
